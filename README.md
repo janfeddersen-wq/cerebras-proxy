@@ -17,7 +17,7 @@ This is a Python-based proxy server designed to forward requests to the Cerebras
   - Waits for the next available key instead of immediately failing
 - **Concurrency Support**: Built with `aiohttp` to efficiently handle multiple concurrent requests with thread-safe key rotation.
 - **Status Monitoring**: Built-in `/_status` endpoint to monitor API key health and rotation state.
-- **Request/Response Logging**: Filesystem logging to save all requests and responses as JSON files for auditing, debugging, or analysis.
+- **Request/Response Logging**: Optional filesystem logging to save all requests and responses as JSON files for auditing, debugging, or analysis (enabled by default).
 - **Automatic Tool Call Validation**: Detects and fixes missing tool responses in chat completion requests by automatically injecting fake "failed" responses to maintain valid conversation flow.
 
 ## Requirements
@@ -60,6 +60,13 @@ Example JSON format:
 Example:
 ```bash
 CEREBRAS_COOLDOWN=90
+```
+
+**`LOG_REQUESTS`**: Enable or disable request/response logging (default: true)
+
+Example:
+```bash
+LOG_REQUESTS=false
 ```
 
 **`LOG_DIR`**: Directory to save request/response logs (default: ./logs)
@@ -187,11 +194,18 @@ Example response:
 
 ## Request/Response Logging
 
-The proxy includes filesystem logging that is always enabled to save all requests and responses for auditing, debugging, or analysis purposes.
+The proxy includes optional filesystem logging to save all requests and responses for auditing, debugging, or analysis purposes.
+
+### Enabling/Disabling Logging
+
+By default, logging is **enabled**. To disable it:
+```bash
+export LOG_REQUESTS=false
+```
 
 ### Configuring Log Directory
 
-By default, logs are saved to `./logs`. You can specify a custom log directory:
+Logs are saved to `./logs` by default. You can specify a custom log directory:
 ```bash
 export LOG_DIR=/var/log/cerebras-proxy
 ```
