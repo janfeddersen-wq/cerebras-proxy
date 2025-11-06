@@ -250,14 +250,9 @@ class ProxyServer:
 
                 # Only use the fixed body if we actually made changes
                 if fixed_msg_count > original_msg_count:
-                    # Serialize with proper settings to match standard JSON formatting
-                    # Use separators without spaces, sort keys for consistency
-                    fixed_body = json.dumps(
-                        fixed_request_data,
-                        separators=(',', ':'),  # Compact format, no extra spaces
-                        ensure_ascii=True,       # Escape unicode characters
-                        sort_keys=False          # Preserve key order
-                    ).encode('utf-8')
+                    # Serialize with default settings (no custom formatting)
+                    # This ensures compatibility with Cerebras API expectations
+                    fixed_body = json.dumps(fixed_request_data).encode('utf-8')
 
                     # Validate the serialized JSON
                     test_parse = json.loads(fixed_body.decode('utf-8'))
@@ -266,7 +261,7 @@ class ProxyServer:
 
                     request_body = fixed_body
                     logger.info(f"Applied tool_call fix: {original_msg_count} -> {fixed_msg_count} messages")
-                    logger.debug(f"Fixed body size: {len(fixed_body)} bytes")
+                    logger.debug(f"Fixed body size: {len(fixed_body)} bytes (original: {len(original_request_body)} bytes)")
             except Exception as e:
                 logger.error(f"Tool call fix failed: {e}", exc_info=True)
                 request_body = original_request_body
