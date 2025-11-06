@@ -4,10 +4,11 @@ import asyncio
 import aiohttp
 from aiohttp import web
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 from datetime import datetime
 from pathlib import Path
 import uuid
+import copy
 
 from api_key_manager import ApiKeyManager
 
@@ -66,28 +67,31 @@ class ProxyServer:
         if 'messages' not in request_data or not isinstance(request_data['messages'], list):
             return request_data
 
-        messages = request_data['messages']
-        fixed_messages = []
-        pending_tool_calls = []  # Track tool_calls waiting for responses
+        messages: List[Dict[str, Any]] = request_data['messages']
+        fixed_messages: List[Dict[str, Any]] = []
+        pending_tool_calls: List[str] = []  # Track tool_calls waiting for responses
 
         for i, msg in enumerate(messages):
+            # Make a copy of the message to avoid modifying original
+            msg_copy = copy.deepcopy(msg)
+
             # Check if this message has tool_calls
-            if msg.get('role') == 'assistant' and 'tool_calls' in msg:
+            if msg_copy.get('role') == 'assistant' and 'tool_calls' in msg_copy:
                 # Add this message
-                fixed_messages.append(msg)
+                fixed_messages.append(msg_copy)
                 # Track all tool_call IDs that need responses
-                for tool_call in msg.get('tool_calls', []):
+                for tool_call in msg_copy.get('tool_calls', []):
                     if 'id' in tool_call:
                         pending_tool_calls.append(tool_call['id'])
                 continue
 
             # Check if this is a tool response
-            if msg.get('role') == 'tool' and 'tool_call_id' in msg:
+            if msg_copy.get('role') == 'tool' and 'tool_call_id' in msg_copy:
                 # Remove this tool_call_id from pending
-                tool_call_id = msg['tool_call_id']
+                tool_call_id = msg_copy['tool_call_id']
                 if tool_call_id in pending_tool_calls:
                     pending_tool_calls.remove(tool_call_id)
-                fixed_messages.append(msg)
+                fixed_messages.append(msg_copy)
                 continue
 
             # If we have pending tool_calls and this is NOT a tool response,
@@ -105,7 +109,7 @@ class ProxyServer:
                 pending_tool_calls.clear()
 
             # Add the current message
-            fixed_messages.append(msg)
+            fixed_messages.append(msg_copy)
 
         # Handle any remaining pending tool_calls at the end
         if pending_tool_calls:
@@ -119,9 +123,10 @@ class ProxyServer:
                 fixed_messages.append(fake_response)
                 logger.info(f"Injected fake tool response for tool_call_id: {tool_call_id}")
 
-        # Update the request data with fixed messages
-        request_data['messages'] = fixed_messages
-        return request_data
+        # Create a deep copy of request_data and update messages
+        fixed_request_data = copy.deepcopy(request_data)
+        fixed_request_data['messages'] = fixed_messages
+        return fixed_request_data
 
     async def _save_request_response_log(
         self,
@@ -232,18 +237,28 @@ class ProxyServer:
 
         # Read request body once for both forwarding and logging
         request_body = await request.read()
-
-        # Apply tool_call validation fix for chat completion requests
         original_request_body = request_body
-        try:
-            if request_body and request.content_type == 'application/json':
+
+        # Apply tool_call validation fix for chat completion requests only
+        if 'chat/completions' in path and request_body:
+            try:
                 request_data = json.loads(request_body.decode('utf-8'))
+                original_msg_count = len(request_data.get('messages', []))
+
                 fixed_request_data = self._fix_missing_tool_responses(request_data)
-                request_body = json.dumps(fixed_request_data).encode('utf-8')
-        except (json.JSONDecodeError, UnicodeDecodeError, Exception) as e:
-            logger.debug(f"Could not parse request body for tool_call validation: {e}")
-            # Use original body if parsing fails
-            request_body = original_request_body
+                fixed_msg_count = len(fixed_request_data.get('messages', []))
+
+                # Validate that the fixed data is valid JSON before using it
+                fixed_body = json.dumps(fixed_request_data, ensure_ascii=False).encode('utf-8')
+                # Test parse to ensure it's valid
+                json.loads(fixed_body.decode('utf-8'))
+
+                request_body = fixed_body
+                if fixed_msg_count > original_msg_count:
+                    logger.info(f"Applied tool_call fix: {original_msg_count} -> {fixed_msg_count} messages")
+            except Exception as e:
+                logger.warning(f"Could not apply tool_call fix, using original body: {e}")
+                request_body = original_request_body
 
         logger.info(f"Processing request to {target_url}")
 
