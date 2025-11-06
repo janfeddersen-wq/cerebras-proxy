@@ -18,6 +18,7 @@ This is a Python-based proxy server designed to forward requests to the Cerebras
 - **Concurrency Support**: Built with `aiohttp` to efficiently handle multiple concurrent requests with thread-safe key rotation.
 - **Status Monitoring**: Built-in `/_status` endpoint to monitor API key health and rotation state.
 - **Request/Response Logging**: Filesystem logging to save all requests and responses as JSON files for auditing, debugging, or analysis.
+- **Automatic Tool Call Validation**: Detects and fixes missing tool responses in chat completion requests by automatically injecting fake "failed" responses to maintain valid conversation flow.
 
 ## Requirements
 
@@ -252,6 +253,72 @@ Each log file contains:
 - Binary data is base64-encoded if the body is not valid JSON or UTF-8
 - Logs are stored locally and never transmitted elsewhere
 - Consider disk space when enabling logging for high-traffic deployments
+
+## Automatic Tool Call Validation
+
+The proxy automatically detects and fixes invalid tool call sequences in chat completion requests. This prevents API errors when clients fail to provide responses for tool calls.
+
+### How It Works
+
+When processing `/chat/completions` requests, the proxy:
+
+1. **Scans the message array** for assistant messages containing `tool_calls`
+2. **Tracks pending tool calls** that are waiting for responses
+3. **Detects missing responses** when:
+   - A tool call is followed by a non-tool message (like a user message)
+   - A tool call appears at the end of the messages array with no response
+4. **Automatically injects fake responses** with `content: "failed"` for each missing tool call
+5. **Updates Content-Length** header to match the modified request body
+
+### Example
+
+**Before (Invalid - Would cause 422 error):**
+```json
+{
+  "messages": [
+    {
+      "role": "assistant",
+      "tool_calls": [{"id": "call_123", "function": {...}}]
+    },
+    {
+      "role": "user",
+      "content": "test"
+    }
+  ]
+}
+```
+
+**After (Valid - Automatically fixed by proxy):**
+```json
+{
+  "messages": [
+    {
+      "role": "assistant",
+      "tool_calls": [{"id": "call_123", "function": {...}}]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_123",
+      "content": "failed"
+    },
+    {
+      "role": "user",
+      "content": "test"
+    }
+  ]
+}
+```
+
+### Logging
+
+When the fix is applied, you'll see log messages:
+```
+WARNING:__main__:Found 1 tool_calls without responses. Injecting fake 'failed' responses.
+INFO:__main__:Injected fake tool response for tool_call_id: call_123
+INFO:__main__:Applied tool_call fix: 2 -> 3 messages (size: 1234 -> 1456 bytes)
+```
+
+This feature is **always enabled** for all chat completion requests and requires no configuration.
 
 ## Architecture
 
